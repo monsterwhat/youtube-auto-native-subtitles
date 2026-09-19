@@ -13,8 +13,8 @@ On every video load the extension:
 1. Detects the video's native language (auto-generated caption track first, then audio-track info).
 2. Looks up your rules (e.g. Spanish video → Spanish subtitles, English video → English subtitles).
 3. Falls back to your fallback language when no rule matches — using YouTube's auto-translate of an existing track when the wanted language has no track of its own.
-4. Switches the subtitle **track only** — it never turns captions on or off. Your CC button stays yours. It waits for stable playback first, since switching mid-load breaks YouTube's caption module.
-5. On multi-audio (dubbed) videos where subtitles still won't apply, switches the audio to the original-language track and retries — captions follow the playing audio.
+4. Switches the subtitle **track only** — it never turns captions on or off. Your CC button stays yours. It waits for stable playback first, since switching mid-load breaks YouTube's caption module. Selection uses YouTube's player API first, then walks the settings menu exactly as if you clicked it.
+5. On multi-audio (dubbed) videos where subtitles still won't apply, switches the audio to the original-language track via the settings menu and retries — captions follow the playing audio.
 6. Re-checks once playback starts, in case YouTube restored your previously remembered language over the fresh selection.
 
 No accounts, no network calls, no tracking. Settings live in local extension storage.
