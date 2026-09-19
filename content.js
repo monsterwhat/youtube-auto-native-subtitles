@@ -12,6 +12,11 @@
       if (document.getElementById(SCRIPT_ID)) {
         return;
       }
+      try {
+        document.documentElement.setAttribute('data-anns-version', browser.runtime.getManifest().version);
+      } catch (stampErr) {
+        console.warn(TAG + ' could not stamp version', stampErr);
+      }
       var script = document.createElement('script');
       script.id = SCRIPT_ID;
       script.src = browser.runtime.getURL('injected.js');

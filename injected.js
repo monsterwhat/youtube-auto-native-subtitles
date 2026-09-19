@@ -54,6 +54,12 @@
     return;
   }
   window.__AUTO_NATIVE_SUBS_LOADED__ = true;
+  try {
+    window.__AUTO_NATIVE_SUBS_VERSION__ = document.documentElement.getAttribute('data-anns-version') || 'unknown';
+  } catch (err) {
+    console.warn(TAG, 'could not read stamped version', err);
+    window.__AUTO_NATIVE_SUBS_VERSION__ = 'unknown';
+  }
 
   function normalizeBase(code) {
     return String(code || '').split('-')[0].toLowerCase();
@@ -467,6 +473,7 @@
         return;
       }
       window.__AUTO_NATIVE_SUBS_LAST__ = {
+        extVersion: window.__AUTO_NATIVE_SUBS_VERSION__ || 'unknown',
         available: tracks.map(trackLabel),
         native: nativeLanguage,
         audio: audioLang,
