@@ -21,9 +21,13 @@
     { native: 'en', subtitles: 'en' }
   ];
   var DEFAULT_FALLBACK = 'en';
+  var DEFAULT_AUDIO_RULES = [
+    { native: 'es', audio: 'es' },
+    { native: 'en', audio: 'en' }
+  ];
 
   function normalizeConfig(raw) {
-    var config = { rules: [], fallback: DEFAULT_FALLBACK };
+    var config = { rules: [], fallback: DEFAULT_FALLBACK, audioRules: [], audioFallback: '' };
     try {
       if (raw && typeof raw === 'object') {
         if (typeof raw.fallback === 'string' && raw.fallback) {
@@ -44,6 +48,23 @@
     }
     if (config.rules.length === 0) {
       config.rules = DEFAULT_RULES.slice();
+    }
+    if (raw && typeof raw === 'object') {
+      if (typeof raw.audioFallback === 'string') {
+        config.audioFallback = raw.audioFallback;
+      }
+      if (Array.isArray(raw.audioRules)) {
+        for (var j = 0; j < raw.audioRules.length; j++) {
+          var arule = raw.audioRules[j] || {};
+          if (typeof arule.native === 'string' && arule.native &&
+            typeof arule.audio === 'string' && arule.audio) {
+            config.audioRules.push({ native: arule.native, audio: arule.audio });
+          }
+        }
+      }
+    }
+    if (config.audioRules.length === 0) {
+      config.audioRules = DEFAULT_AUDIO_RULES.slice();
     }
     return config;
   }
@@ -286,6 +307,16 @@
       }
     }
     return null;
+  }
+
+  function chooseAudioTarget(nativeLanguage) {
+    var base = normalizeBase(nativeLanguage);
+    for (var i = 0; i < CONFIG.audioRules.length; i++) {
+      if (normalizeBase(CONFIG.audioRules[i].native) === base) {
+        return CONFIG.audioRules[i].audio;
+      }
+    }
+    return CONFIG.audioFallback;
   }
 
   function chooseTargetLanguage(nativeLanguage) {
@@ -1021,12 +1052,17 @@
         console.warn(TAG, 'giving up: subtitle select failed even after audio switch');
         return;
       }
-      audioSwitchToOriginal(player, data.native, function (switched) {
+      var audioTarget = chooseAudioTarget(data.native);
+      if (!audioTarget) {
+        console.warn(TAG, 'giving up: subtitle select failed and audio switching is off');
+        return;
+      }
+      audioSwitchToOriginal(player, audioTarget, function (switched) {
         if (seq !== currentSeq) {
           return;
         }
         if (!switched) {
-          console.warn(TAG, 'giving up: subtitle select failed and no original audio to switch to');
+          console.warn(TAG, 'giving up: subtitle select failed and audio switch failed');
           return;
         }
         window.setTimeout(function () {
@@ -1034,7 +1070,7 @@
             return;
           }
           var fresh = getPlayer() || player;
-          var data2 = gatherData(fresh);
+          var data2 = decideTracks(fresh);
           if (!data2.tracks.length || !data2.pick) {
             console.warn(TAG, 'giving up: no captions after audio switch');
             return;
@@ -1252,7 +1288,7 @@
           return;
         }
         if (!found) {
-          console.info(TAG, 'no native-language audio option in menu');
+          console.info(TAG, 'no matching audio option in menu');
           done(false);
           return;
         }

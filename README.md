@@ -31,6 +31,7 @@ Click the toolbar button (or `about:addons` → Preferences):
 
 - **Rules table** — video language → subtitle language rows, add/remove freely.
 - **Fallback language** — used when nothing matches.
+- **Audio rules table** — video language → audio language rows for multi-audio videos, plus an audio fallback (or "Don't change audio").
 - Changes apply to open YouTube tabs automatically.
 
 ## Build

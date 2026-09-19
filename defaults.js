@@ -3,7 +3,12 @@ var ANNS_DEFAULTS = {
     { native: 'es', subtitles: 'es' },
     { native: 'en', subtitles: 'en' }
   ],
-  fallback: 'en'
+  fallback: 'en',
+  audioRules: [
+    { native: 'es', audio: 'es' },
+    { native: 'en', audio: 'en' }
+  ],
+  audioFallback: ''
 };
 
 var ANNS_LANGUAGES = [

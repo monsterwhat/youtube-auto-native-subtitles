@@ -17,8 +17,17 @@
     return entry.name + ' (' + entry.code + ')';
   }
 
-  function fillSelect(select, selectedCode) {
+  function fillSelect(select, selectedCode, allowEmpty) {
     select.textContent = '';
+    if (allowEmpty) {
+      var emptyOption = document.createElement('option');
+      emptyOption.value = '';
+      emptyOption.textContent = "Don't change audio";
+      if (!selectedCode) {
+        emptyOption.selected = true;
+      }
+      select.appendChild(emptyOption);
+    }
     for (var i = 0; i < ANNS_LANGUAGES.length; i++) {
       var entry = ANNS_LANGUAGES[i];
       var option = document.createElement('option');
@@ -29,28 +38,28 @@
       }
       select.appendChild(option);
     }
-    if (!select.value && ANNS_LANGUAGES.length > 0) {
+    if (!select.value && !allowEmpty && ANNS_LANGUAGES.length > 0) {
       select.selectedIndex = 0;
     }
   }
 
-  function addRuleRow(nativeCode, subtitleCode) {
+  function addRuleRow(containerId, targetClass, targetTitle, nativeCode, targetCode) {
     var row = document.createElement('div');
     row.className = 'row';
 
     var nativeSelect = document.createElement('select');
     nativeSelect.className = 'native';
     nativeSelect.title = 'Video language';
-    fillSelect(nativeSelect, nativeCode);
+    fillSelect(nativeSelect, nativeCode, false);
 
     var arrow = document.createElement('span');
     arrow.className = 'arrow';
     arrow.textContent = '→';
 
-    var subtitleSelect = document.createElement('select');
-    subtitleSelect.className = 'subtitles';
-    subtitleSelect.title = 'Subtitle language';
-    fillSelect(subtitleSelect, subtitleCode);
+    var targetSelect = document.createElement('select');
+    targetSelect.className = targetClass;
+    targetSelect.title = targetTitle;
+    fillSelect(targetSelect, targetCode, false);
 
     var removeButton = document.createElement('button');
     removeButton.type = 'button';
@@ -63,34 +72,52 @@
 
     row.appendChild(nativeSelect);
     row.appendChild(arrow);
-    row.appendChild(subtitleSelect);
+    row.appendChild(targetSelect);
     row.appendChild(removeButton);
-    el('rules').appendChild(row);
+    el(containerId).appendChild(row);
   }
 
-  function render(config) {
-    el('rules').textContent = '';
-    var rules = (config && Array.isArray(config.rules)) ? config.rules : [];
-    for (var i = 0; i < rules.length; i++) {
-      addRuleRow(rules[i].native, rules[i].subtitles);
+  function renderRules(containerId, targetClass, targetTitle, rules, targetKey) {
+    el(containerId).textContent = '';
+    var list = Array.isArray(rules) ? rules : [];
+    for (var i = 0; i < list.length; i++) {
+      addRuleRow(containerId, targetClass, targetTitle, list[i].native, list[i][targetKey]);
     }
-    fillSelect(el('fallback'), config ? config.fallback : null);
   }
 
-  function collect() {
+  function collectRules(containerId, targetClass, targetKey) {
     var rules = [];
     var seen = {};
-    var rows = el('rules').querySelectorAll('.row');
+    var rows = el(containerId).querySelectorAll('.row');
     for (var i = 0; i < rows.length; i++) {
       var native = rows[i].querySelector('.native').value;
-      var subtitles = rows[i].querySelector('.subtitles').value;
-      if (!native || !subtitles || seen[native]) {
+      var target = rows[i].querySelector('.' + targetClass).value;
+      if (!native || !target || seen[native]) {
         continue;
       }
       seen[native] = true;
-      rules.push({ native: native, subtitles: subtitles });
+      var rule = { native: native };
+      rule[targetKey] = target;
+      rules.push(rule);
     }
-    return { rules: rules, fallback: el('fallback').value };
+    return rules;
+  }
+
+  function render(config) {
+    var safe = config || {};
+    renderRules('rules', 'subtitles', 'Subtitle language', safe.rules, 'subtitles');
+    renderRules('audioRules', 'audio', 'Audio language', safe.audioRules, 'audio');
+    fillSelect(el('fallback'), safe.fallback, false);
+    fillSelect(el('audioFallback'), safe.audioFallback, true);
+  }
+
+  function collect() {
+    return {
+      rules: collectRules('rules', 'subtitles', 'subtitles'),
+      fallback: el('fallback').value,
+      audioRules: collectRules('audioRules', 'audio', 'audio'),
+      audioFallback: el('audioFallback').value
+    };
   }
 
   function save() {
@@ -127,7 +154,11 @@
   document.addEventListener('DOMContentLoaded', function () {
     load();
     el('add').addEventListener('click', function () {
-      addRuleRow('es', 'es');
+      addRuleRow('rules', 'subtitles', 'Subtitle language', 'es', 'es');
+      setStatus('', false);
+    });
+    el('addAudio').addEventListener('click', function () {
+      addRuleRow('audioRules', 'audio', 'Audio language', 'es', 'es');
       setStatus('', false);
     });
     el('save').addEventListener('click', save);
