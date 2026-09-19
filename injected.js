@@ -822,6 +822,8 @@
     var wantedBase = null;
     var audioBaseline = null;
     var audioLang = null;
+    var pendingAudio = null;
+    var pendingCount = 0;
     if (audioTimer) {
       window.clearInterval(audioTimer);
       audioTimer = 0;
@@ -843,19 +845,27 @@
       if (!audioBaseline) {
         audioBaseline = spoken;
         audioLang = null;
+        pendingAudio = null;
+        pendingCount = 0;
         return;
       }
-      if (spoken === audioBaseline) {
-        if (audioLang) {
-          audioLang = null;
-          attempts = 0;
-          attempt();
+      var effective = (spoken === audioBaseline) ? null : spoken;
+      if (effective !== pendingAudio) {
+        pendingAudio = effective;
+        pendingCount = 1;
+        return;
+      }
+      pendingCount += 1;
+      if (pendingCount < 2) {
+        return;
+      }
+      if (effective !== audioLang) {
+        if (effective) {
+          console.info(TAG, 'audio language changed ' + (audioLang || audioBaseline) + ' -> ' + effective + ', re-applying subtitles');
+        } else {
+          console.info(TAG, 'audio language back to baseline, re-applying subtitles');
         }
-        return;
-      }
-      if (spoken !== audioLang) {
-        console.info(TAG, 'audio language changed ' + (audioLang || audioBaseline) + ' -> ' + spoken + ', re-applying subtitles');
-        audioLang = spoken;
+        audioLang = effective;
         attempts = 0;
         attempt();
       }
