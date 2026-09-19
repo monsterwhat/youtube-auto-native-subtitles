@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Auto Native Subtitles",
+  "version": "1.1.0",
+  "description": "Automatically switches YouTube subtitles to the language you configure per video language, with a fallback language.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "auto-native-subtitles@local",
+      "strict_min_version": "109.0"
+    }
+  },
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "Auto Native Subtitles — open settings",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "options_ui": {
+    "page": "options.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/*"],
+      "js": ["defaults.js", "content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js"],
+      "matches": ["*://www.youtube.com/*"]
+    }
+  ]
+}
