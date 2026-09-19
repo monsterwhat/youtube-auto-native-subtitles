@@ -93,10 +93,32 @@ try {
   if ($stagedIcons.Count -ne $icons.Count) {
     throw ("Icon packaging mismatch: expected {0}, staged {1}." -f $icons.Count, $stagedIcons.Count)
   }
-  Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipPath -Force
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $stageItems = Get-ChildItem -LiteralPath $stage -Recurse -File
+  $zipArchive = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+  try {
+    foreach ($item in $stageItems) {
+      $relative = $item.FullName.Substring($stage.Length + 1) -replace '\\', '/'
+      [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zipArchive, $item.FullName, $relative, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    }
+  } finally {
+    $zipArchive.Dispose()
+  }
 } finally {
   Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+  $verifyArchive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+  try {
+    foreach ($entry in $verifyArchive.Entries) {
+      if ($entry.FullName.Contains('\')) {
+        throw ("Invalid archive entry name (backslash): {0}" -f $entry.FullName)
+      }
+    }
+  } finally {
+    $verifyArchive.Dispose()
+  }
 
 $zipItem = Get-Item -LiteralPath $zipPath
 Write-Host ("Built: {0} ({1} bytes)" -f $zipItem.FullName, $zipItem.Length)
