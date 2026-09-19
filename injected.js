@@ -1223,7 +1223,19 @@
     }
   });
 
-  document.addEventListener('yt-navigate-finish', onNavigate);
+  var lastNavTime = 0;
+
+  function onNavigateGuarded() {
+    var now = Date.now();
+    if (now - lastNavTime < 1000) {
+      return;
+    }
+    lastNavTime = now;
+    onNavigate();
+  }
+
+  document.addEventListener('yt-navigate-finish', onNavigateGuarded);
+  window.addEventListener('yt-navigate-finish', onNavigateGuarded);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', onNavigate, { once: true });
   } else {
