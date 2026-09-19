@@ -317,6 +317,22 @@
     }
   }
 
+  function getAudioLanguage(player) {
+    try {
+      if (!player || typeof player.getAudioTrack !== 'function') {
+        return null;
+      }
+      var audio = player.getAudioTrack();
+      if (!audio || typeof audio !== 'object') {
+        return null;
+      }
+      return audio.languageCode || audio.language_code || audio.language || null;
+    } catch (err) {
+      console.warn(TAG, 'could not read current audio track', err);
+      return null;
+    }
+  }
+
   function selectTrack(player, track, methodIdx) {
     try {
       if (typeof player.loadModule === 'function') {
@@ -367,6 +383,8 @@
       path.indexOf('/live/') === 0;
   }
 
+  var audioTimer = 0;
+
   function run() {
     if (!isVideoPage()) {
       return;
@@ -374,6 +392,36 @@
     currentSeq += 1;
     var seq = currentSeq;
     var attempts = 0;
+    var audioLang = null;
+    if (audioTimer) {
+      window.clearInterval(audioTimer);
+      audioTimer = 0;
+    }
+    audioTimer = window.setInterval(function () {
+      if (seq !== currentSeq) {
+        window.clearInterval(audioTimer);
+        audioTimer = 0;
+        return;
+      }
+      var watcherPlayer = getPlayer();
+      if (!watcherPlayer) {
+        return;
+      }
+      var spoken = normalizeBase(getAudioLanguage(watcherPlayer));
+      if (!spoken) {
+        return;
+      }
+      if (!audioLang) {
+        audioLang = spoken;
+        return;
+      }
+      if (spoken !== audioLang) {
+        console.info(TAG, 'audio language changed ' + audioLang + ' -> ' + spoken + ', re-applying subtitles');
+        audioLang = spoken;
+        attempts = 0;
+        attempt(0);
+      }
+    }, 3000);
 
     function scheduleRetry(reason, nextMethod) {
       if (seq !== currentSeq) {
@@ -411,7 +459,8 @@
         return;
       }
       var nativeLanguage = detectNativeLanguage(playerResponse, tracks);
-      var targetBase = chooseTargetLanguage(nativeLanguage);
+      var effectiveLanguage = audioLang || nativeLanguage;
+      var targetBase = chooseTargetLanguage(effectiveLanguage);
       var track = pickTrack(targetBase, tracks);
       if (!track) {
         console.warn(TAG, 'no usable caption track found');
@@ -420,6 +469,8 @@
       window.__AUTO_NATIVE_SUBS_LAST__ = {
         available: tracks.map(trackLabel),
         native: nativeLanguage,
+        audio: audioLang,
+        effective: effectiveLanguage,
         target: targetBase,
         picked: trackLabel(track),
         currentBefore: currentTrackCode(player),
@@ -427,7 +478,8 @@
         result: 'pending'
       };
       console.info(TAG, 'available: ' + tracks.map(trackLabel).join(', ') +
-        ' | native=' + (nativeLanguage || 'unknown') + ' target=' + targetBase);
+        ' | native=' + (nativeLanguage || 'unknown') + ' audio=' + (audioLang || '-') +
+        ' target=' + targetBase);
       selectTrack(player, track, methodIdx);
       window.setTimeout(function () {
         if (seq !== currentSeq) {
@@ -438,8 +490,9 @@
         window.__AUTO_NATIVE_SUBS_LAST__.currentAfter = current;
         if (codeOk) {
           window.__AUTO_NATIVE_SUBS_LAST__.result = 'ok';
-          console.info(TAG, 'subtitles set to ' + trackLabel(track) +
-            ' | native=' + (nativeLanguage || 'unknown') + ' target=' + targetBase);
+              console.info(TAG, 'subtitles set to ' + trackLabel(track) +
+                ' | native=' + (nativeLanguage || 'unknown') + ' audio=' + (audioLang || '-') +
+                ' target=' + targetBase);
         } else if (methodIdx < 2) {
           scheduleRetry('method ' + methodIdx + ' did not stick (current=' + (current || 'none') +
             '), trying next method', methodIdx + 1);
