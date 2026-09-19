@@ -14,7 +14,7 @@ On every video load the extension:
 2. Looks up your rules (e.g. Spanish video → Spanish subtitles, English video → English subtitles).
 3. Falls back to your fallback language when no rule matches or the wanted track doesn't exist.
 4. Switches the subtitle **track only** — it never turns captions on or off. Your CC button stays yours.
-5. Keeps following dubbed videos: if you switch the audio track mid-video, subtitles re-apply for the new audio language through the same rules.
+5. Re-checks once playback starts, in case YouTube restored your previously remembered language over the fresh selection.
 
 No accounts, no network calls, no tracking. Settings live in local extension storage.
 

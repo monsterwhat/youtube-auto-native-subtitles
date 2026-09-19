@@ -323,22 +323,6 @@
     }
   }
 
-  function getAudioLanguage(player) {
-    try {
-      if (!player || typeof player.getAudioTrack !== 'function') {
-        return null;
-      }
-      var audio = player.getAudioTrack();
-      if (!audio || typeof audio !== 'object') {
-        return null;
-      }
-      return audio.languageCode || audio.language_code || audio.language || null;
-    } catch (err) {
-      console.warn(TAG, 'could not read current audio track', err);
-      return null;
-    }
-  }
-
   function selectTrack(player, track, methodIdx) {
     try {
       if (typeof player.loadModule === 'function') {
@@ -389,7 +373,7 @@
       path.indexOf('/live/') === 0;
   }
 
-  var audioTimer = 0;
+  var playingHandler = null;
 
   function run() {
     if (!isVideoPage()) {
@@ -398,36 +382,35 @@
     currentSeq += 1;
     var seq = currentSeq;
     var attempts = 0;
-    var audioLang = null;
-    if (audioTimer) {
-      window.clearInterval(audioTimer);
-      audioTimer = 0;
+    var wantedBase = null;
+    if (playingHandler) {
+      document.removeEventListener('playing', playingHandler, true);
+      playingHandler = null;
     }
-    audioTimer = window.setInterval(function () {
+    playingHandler = function () {
       if (seq !== currentSeq) {
-        window.clearInterval(audioTimer);
-        audioTimer = 0;
         return;
       }
-      var watcherPlayer = getPlayer();
-      if (!watcherPlayer) {
-        return;
-      }
-      var spoken = normalizeBase(getAudioLanguage(watcherPlayer));
-      if (!spoken) {
-        return;
-      }
-      if (!audioLang) {
-        audioLang = spoken;
-        return;
-      }
-      if (spoken !== audioLang) {
-        console.info(TAG, 'audio language changed ' + audioLang + ' -> ' + spoken + ', re-applying subtitles');
-        audioLang = spoken;
-        attempts = 0;
-        attempt(0);
-      }
-    }, 3000);
+      document.removeEventListener('playing', playingHandler, true);
+      playingHandler = null;
+      window.setTimeout(function () {
+        if (seq !== currentSeq || !wantedBase) {
+          return;
+        }
+        var livePlayer = getPlayer();
+        if (!livePlayer) {
+          return;
+        }
+        var current = currentTrackCode(livePlayer);
+        if (!current || normalizeBase(current) !== wantedBase) {
+          console.info(TAG, 'track drifted after playback started (current=' + (current || 'none') +
+            '), re-applying');
+          attempts = 0;
+          attempt(0);
+        }
+      }, 1500);
+    };
+    document.addEventListener('playing', playingHandler, true);
 
     function scheduleRetry(reason, nextMethod) {
       if (seq !== currentSeq) {
@@ -465,19 +448,17 @@
         return;
       }
       var nativeLanguage = detectNativeLanguage(playerResponse, tracks);
-      var effectiveLanguage = audioLang || nativeLanguage;
-      var targetBase = chooseTargetLanguage(effectiveLanguage);
+      var targetBase = chooseTargetLanguage(nativeLanguage);
       var track = pickTrack(targetBase, tracks);
       if (!track) {
         console.warn(TAG, 'no usable caption track found');
         return;
       }
+      wantedBase = targetBase;
       window.__AUTO_NATIVE_SUBS_LAST__ = {
         extVersion: window.__AUTO_NATIVE_SUBS_VERSION__ || 'unknown',
         available: tracks.map(trackLabel),
         native: nativeLanguage,
-        audio: audioLang,
-        effective: effectiveLanguage,
         target: targetBase,
         picked: trackLabel(track),
         currentBefore: currentTrackCode(player),
@@ -485,8 +466,7 @@
         result: 'pending'
       };
       console.info(TAG, 'available: ' + tracks.map(trackLabel).join(', ') +
-        ' | native=' + (nativeLanguage || 'unknown') + ' audio=' + (audioLang || '-') +
-        ' target=' + targetBase);
+        ' | native=' + (nativeLanguage || 'unknown') + ' target=' + targetBase);
       selectTrack(player, track, methodIdx);
       window.setTimeout(function () {
         if (seq !== currentSeq) {
@@ -498,8 +478,7 @@
         if (codeOk) {
           window.__AUTO_NATIVE_SUBS_LAST__.result = 'ok';
               console.info(TAG, 'subtitles set to ' + trackLabel(track) +
-                ' | native=' + (nativeLanguage || 'unknown') + ' audio=' + (audioLang || '-') +
-                ' target=' + targetBase);
+                ' | native=' + (nativeLanguage || 'unknown') + ' target=' + targetBase);
         } else if (methodIdx < 2) {
           scheduleRetry('method ' + methodIdx + ' did not stick (current=' + (current || 'none') +
             '), trying next method', methodIdx + 1);
