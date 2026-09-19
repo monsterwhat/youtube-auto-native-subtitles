@@ -88,7 +88,11 @@ try {
   }
   $stageIcons = Join-Path $stage 'icons'
   New-Item -ItemType Directory -Path $stageIcons | Out-Null
-  Copy-Item -LiteralPath (Join-Path $iconsDir '*') -Destination $stageIcons -Recurse -Force
+  Copy-Item -Path (Join-Path $iconsDir '*') -Destination $stageIcons -Recurse -Force
+  $stagedIcons = @(Get-ChildItem -LiteralPath $stageIcons -Filter '*.png')
+  if ($stagedIcons.Count -ne $icons.Count) {
+    throw ("Icon packaging mismatch: expected {0}, staged {1}." -f $icons.Count, $stagedIcons.Count)
+  }
   Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipPath -Force
 } finally {
   Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
