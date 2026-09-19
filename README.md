@@ -36,6 +36,8 @@ Click the toolbar button (or `about:addons` → Preferences):
 
 ## Build
 
+Double-click `run-build.bat`, or run:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```

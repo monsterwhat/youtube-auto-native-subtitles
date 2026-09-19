@@ -17,6 +17,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+if ([string]::IsNullOrWhiteSpace($ProjectDir)) {
+  if ($PSScriptRoot) {
+    $ProjectDir = $PSScriptRoot
+  } else {
+    $ProjectDir = (Get-Location).Path
+  }
+}
+
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
   $OutDir = Join-Path $ProjectDir 'dist'
 }
