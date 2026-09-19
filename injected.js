@@ -299,6 +299,27 @@
   }
 
   // Preferred track for the target language, else English, else first available.
+  function bestTranslatableBase(tracks, exclude) {
+    var fallbackBase = null;
+    for (var i = 0; i < tracks.length; i++) {
+      var t = tracks[i];
+      if (!t) {
+        continue;
+      }
+      var b = normalizeBase(t.languageCode);
+      if (exclude.indexOf(b) !== -1) {
+        continue;
+      }
+      if (t.translatable || t.kind === 'asr') {
+        return t;
+      }
+      if (!fallbackBase) {
+        fallbackBase = t;
+      }
+    }
+    return fallbackBase;
+  }
+
   function pickTrack(targetBase, tracks) {
     var i;
     for (i = 0; i < tracks.length; i++) {
@@ -307,25 +328,23 @@
       }
     }
     var fallbackBase = normalizeBase(CONFIG.fallback);
+    var base = bestTranslatableBase(tracks, [targetBase, fallbackBase]);
+    if (base) {
+      return { track: base, tlang: targetBase };
+    }
     for (i = 0; i < tracks.length; i++) {
       if (tracks[i] && normalizeBase(tracks[i].languageCode) === fallbackBase) {
         return { track: tracks[i], tlang: null };
       }
     }
-    var base = null;
-    for (i = 0; i < tracks.length; i++) {
-      if (tracks[i] && tracks[i].kind === 'asr') {
-        base = tracks[i];
-        break;
-      }
+    var base2 = bestTranslatableBase(tracks, [fallbackBase]);
+    if (base2) {
+      return { track: base2, tlang: fallbackBase };
     }
-    if (!base) {
-      base = tracks[0] || null;
+    if (tracks.length) {
+      return { track: tracks[0], tlang: null };
     }
-    if (!base) {
-      return null;
-    }
-    return { track: base, tlang: fallbackBase };
+    return null;
   }
 
   function getPlayer() {
