@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "YouTube Auto Native Subtitles",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "description": "Automatically switches YouTube subtitles to the language you configure per video language, with a fallback language.",
   "browser_specific_settings": {
     "gecko": {
       "id": "auto-native-subtitles@local",
-      "strict_min_version": "109.0",
+      "strict_min_version": "140.0",
       "data_collection_permissions": {
         "required": ["none"]
       }
