@@ -810,6 +810,7 @@
   }
 
   var playingHandler = null;
+  var audioTimer = 0;
 
   function run() {
     if (!isVideoPage()) {
@@ -819,6 +820,46 @@
     var seq = currentSeq;
     var attempts = 0;
     var wantedBase = null;
+    var audioBaseline = null;
+    var audioLang = null;
+    if (audioTimer) {
+      window.clearInterval(audioTimer);
+      audioTimer = 0;
+    }
+    audioTimer = window.setInterval(function () {
+      if (seq !== currentSeq) {
+        window.clearInterval(audioTimer);
+        audioTimer = 0;
+        return;
+      }
+      var watcherPlayer = getPlayer();
+      if (!watcherPlayer) {
+        return;
+      }
+      var spoken = currentAudioBase(watcherPlayer);
+      if (!spoken) {
+        return;
+      }
+      if (!audioBaseline) {
+        audioBaseline = spoken;
+        audioLang = null;
+        return;
+      }
+      if (spoken === audioBaseline) {
+        if (audioLang) {
+          audioLang = null;
+          attempts = 0;
+          attempt();
+        }
+        return;
+      }
+      if (spoken !== audioLang) {
+        console.info(TAG, 'audio language changed ' + (audioLang || audioBaseline) + ' -> ' + spoken + ', re-applying subtitles');
+        audioLang = spoken;
+        attempts = 0;
+        attempt();
+      }
+    }, 3000);
     if (playingHandler) {
       document.removeEventListener('playing', playingHandler, true);
       playingHandler = null;
@@ -877,6 +918,10 @@
 
     function runSelection(player, audioTried) {
       var data = decideTracks(player);
+      if (audioLang) {
+        data.target = chooseTargetLanguage(audioLang);
+        data.pick = pickTrack(data.target, data.tracks);
+      }
       if (!data.tracks.length) {
         scheduleRetry(data.playerResponse ? 'no caption tracks exposed yet' : 'player data not ready yet');
         return;
@@ -890,6 +935,7 @@
         extVersion: window.__AUTO_NATIVE_SUBS_VERSION__ || 'unknown',
         available: data.tracks.map(trackLabel),
         native: data.native,
+        audio: audioLang,
         target: data.target,
         translation: data.pick.tlang,
         picked: trackLabel(data.pick.track),

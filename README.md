@@ -16,6 +16,7 @@ On every video load the extension:
 4. Switches the subtitle **track only** — it never turns captions on or off. Your CC button stays yours. It waits for stable playback first, since switching mid-load breaks YouTube's caption module. Selection uses YouTube's player API first, then walks the settings menu exactly as if you clicked it.
 5. On multi-audio (dubbed) videos where subtitles still won't apply, switches the audio to the original-language track via the settings menu and retries — captions follow the playing audio.
 6. Re-checks once playback starts, in case YouTube restored your previously remembered language over the fresh selection.
+7. Follows audio-track switches on the same video: change a dubbed video's audio language and subtitles re-apply for the new audio through the same rules.
 
 No accounts, no network calls, no tracking. Settings live in local extension storage.
 
