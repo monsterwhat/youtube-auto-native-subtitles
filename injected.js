@@ -546,8 +546,45 @@
     } catch (err) {
       console.warn(TAG, 'could not read audio caption tracks', err);
     }
-    var tracks = mergeTracks(mergeTracks(staticTracks, liveTracks), audioCaps);
-    var out = { playerResponse: playerResponse, tracks: tracks, native: null, target: null, pick: null };
+    return { playerResponse: playerResponse, staticTracks: staticTracks, liveTracks: liveTracks, audioCaps: audioCaps };
+  }
+
+  function currentVideoId() {
+    try {
+      var path = location.pathname || '';
+      if (path === '/watch') {
+        var m = /[?&]v=([^&#]+)/.exec(location.search || '');
+        return m ? m[1] : null;
+      }
+      var parts = path.split('/');
+      if ((parts[1] === 'shorts' || parts[1] === 'embed' || parts[1] === 'live') && parts[2]) {
+        return parts[2];
+      }
+      return null;
+    } catch (err) {
+      console.warn(TAG, 'could not read video id from url', err);
+      return null;
+    }
+  }
+
+  function responseMatchesVideo(playerResponse, videoId) {
+    if (!playerResponse || !videoId) {
+      return true;
+    }
+    try {
+      var id = playerResponse.videoDetails && playerResponse.videoDetails.videoId;
+      if (!id) {
+        return true;
+      }
+      return id === videoId;
+    } catch (err) {
+      console.warn(TAG, 'could not compare response video id', err);
+      return true;
+    }
+  }
+
+  function finishDecision(playerResponse, tracks, liveOnly) {
+    var out = { playerResponse: playerResponse, tracks: tracks, native: null, target: null, pick: null, liveOnly: liveOnly };
     if (!tracks.length) {
       return out;
     }
@@ -555,6 +592,19 @@
     out.target = chooseTargetLanguage(out.native);
     out.pick = pickTrack(out.target, tracks);
     return out;
+  }
+
+  function decideTracks(player) {
+    var data = gatherData(player);
+    if (responseMatchesVideo(data.playerResponse, currentVideoId())) {
+      return finishDecision(data.playerResponse, mergeTracks(mergeTracks(data.staticTracks, data.liveTracks), data.audioCaps), false);
+    }
+    var liveFresh = mergeTracks(data.liveTracks, data.audioCaps);
+    if (liveFresh.length) {
+      console.info(TAG, 'static data is stale, deciding from live player data');
+      return finishDecision(null, liveFresh, true);
+    }
+    return { playerResponse: data.playerResponse, tracks: [], native: null, target: null, pick: null, liveOnly: true };
   }
 
   var SUBS_ROW_HINT = /subtit|subt[ií]tulo|sous-titre|untertitel|sottotitol|legenda|ondertitel|cc\b|字幕|자막/i;
@@ -826,7 +876,7 @@
     }
 
     function runSelection(player, audioTried) {
-      var data = gatherData(player);
+      var data = decideTracks(player);
       if (!data.tracks.length) {
         scheduleRetry(data.playerResponse ? 'no caption tracks exposed yet' : 'player data not ready yet');
         return;
@@ -849,7 +899,8 @@
       };
       console.info(TAG, 'available: ' + data.tracks.map(trackLabel).join(', ') +
         ' | native=' + (data.native || 'unknown') + ' target=' + data.target +
-        (data.pick.tlang ? ' translate=' + data.pick.tlang : ''));
+        (data.pick.tlang ? ' translate=' + data.pick.tlang : '') +
+        (data.liveOnly ? ' (live-only)' : ''));
       waitForStable(player, function (stable) {
         if (seq !== currentSeq) {
           return;
