@@ -154,7 +154,8 @@
       vssId: entry.vssId || entry.vss_id || entry.id || '',
       kind: entry.kind || '',
       name: name,
-      translatable: entry.is_translateable === true || entry.isTranslatable === true
+      translatable: entry.is_translateable === true || entry.isTranslatable === true,
+      raw: entry
     };
   }
 
@@ -170,7 +171,15 @@
       if (typeof player.getOption !== 'function') {
         return [];
       }
-      var list = player.getOption('captions', 'tracklist');
+      var list = null;
+      try {
+        list = player.getOption('captions', 'tracklist', { includeAsr: true });
+      } catch (asrErr) {
+        console.warn(TAG, 'tracklist with asr flag unsupported, retrying plain', asrErr);
+      }
+      if (!list) {
+        list = player.getOption('captions', 'tracklist');
+      }
       if (!list || !list.length) {
         return [];
       }
@@ -294,16 +303,29 @@
     var i;
     for (i = 0; i < tracks.length; i++) {
       if (tracks[i] && normalizeBase(tracks[i].languageCode) === targetBase) {
-        return tracks[i];
+        return { track: tracks[i], tlang: null };
       }
     }
     var fallbackBase = normalizeBase(CONFIG.fallback);
     for (i = 0; i < tracks.length; i++) {
       if (tracks[i] && normalizeBase(tracks[i].languageCode) === fallbackBase) {
-        return tracks[i];
+        return { track: tracks[i], tlang: null };
       }
     }
-    return tracks[0] || null;
+    var base = null;
+    for (i = 0; i < tracks.length; i++) {
+      if (tracks[i] && tracks[i].kind === 'asr') {
+        base = tracks[i];
+        break;
+      }
+    }
+    if (!base) {
+      base = tracks[0] || null;
+    }
+    if (!base) {
+      return null;
+    }
+    return { track: base, tlang: fallbackBase };
   }
 
   function getPlayer() {
@@ -323,7 +345,7 @@
     }
   }
 
-  function selectTrack(player, track, methodIdx) {
+  function selectTrack(player, track, methodIdx, tlang) {
     try {
       if (typeof player.loadModule === 'function') {
         player.loadModule('captions');
@@ -331,16 +353,35 @@
     } catch (err) {
       console.warn(TAG, 'captions module load notice', err);
     }
-    try {
-      if (methodIdx === 2) {
+    if (methodIdx === 3) {
+      try {
         player.setTrackToLanguage(track.languageCode);
-      } else if (methodIdx === 1 && track.vssId) {
-        player.setOption('captions', 'track', { languageCode: track.languageCode, vssId: track.vssId });
-      } else {
-        player.setOption('captions', 'track', { languageCode: track.languageCode });
+      } catch (err) {
+        console.warn(TAG, 'caption track select failed (method 3)', err);
       }
-    } catch (err) {
-      console.warn(TAG, 'caption track select failed (method ' + methodIdx + ')', err);
+    } else {
+      var opt = null;
+      if (methodIdx === 0 && track.raw && typeof track.raw === 'object') {
+        opt = {};
+        for (var key in track.raw) {
+          if (Object.prototype.hasOwnProperty.call(track.raw, key)) {
+            opt[key] = track.raw[key];
+          }
+        }
+      } else {
+        opt = { languageCode: track.languageCode };
+        if (methodIdx === 2 && track.vssId) {
+          opt.vssId = track.vssId;
+        }
+      }
+      if (tlang) {
+        opt.translationLanguage = { languageCode: tlang };
+      }
+      try {
+        player.setOption('captions', 'track', opt);
+      } catch (err) {
+        console.warn(TAG, 'caption track select failed (method ' + methodIdx + ')', err);
+      }
     }
     try {
       player.setOption('captions', 'reload', true);
@@ -363,6 +404,189 @@
         track.name.simpleText : String(track.name);
     }
     return name ? label + ' (' + name + ')' : label;
+  }
+
+  var CODE_NAMES = {
+    es: ['spanish', 'español', 'espagnol', 'spanisch', 'spagnolo'],
+    en: ['english', 'inglés', 'ingles', 'anglais', 'englisch', 'inglese'],
+    fr: ['french', 'français', 'francais', 'französisch', 'francese'],
+    de: ['german', 'deutsch', 'allemand', 'alemán', 'tedesco'],
+    it: ['italian', 'italiano', 'italien'],
+    pt: ['portuguese', 'português', 'portugues', 'portugiesisch'],
+    nl: ['dutch', 'nederlands', 'néerlandais'],
+    ru: ['russian', 'ruso', 'russe', 'russisch'],
+    ja: ['japanese', 'japonés', 'japones', 'japonais', 'japanisch'],
+    zh: ['chinese', 'chino', 'chinois', 'chinesisch'],
+    ko: ['korean', 'coreano', 'coréen'],
+    ar: ['arabic', 'árabe', 'arabe'],
+    hi: ['hindi', 'hindí'],
+    tr: ['turkish', 'turco', 'turc']
+  };
+
+  function audioNameToBase(name) {
+    var lower = String(name || '').toLowerCase();
+    if (!lower) {
+      return '';
+    }
+    for (var code in CODE_NAMES) {
+      if (!Object.prototype.hasOwnProperty.call(CODE_NAMES, code)) {
+        continue;
+      }
+      var names = CODE_NAMES[code];
+      for (var i = 0; i < names.length; i++) {
+        if (lower.indexOf(names[i]) !== -1) {
+          return code;
+        }
+      }
+    }
+    return '';
+  }
+
+  function audioTrackInfo(entry) {
+    var name = '';
+    var code = '';
+    try {
+      if (entry && typeof entry === 'object') {
+        if (typeof entry.getLanguageInfo === 'function') {
+          var li = entry.getLanguageInfo() || {};
+          name = li.name || li.languageName || '';
+          code = li.languageCode || li.code || '';
+        }
+        var ep = entry.EP || entry.ep || {};
+        if (!name) {
+          name = ep.name || entry.name || entry.displayName || '';
+        }
+        if (!code) {
+          code = entry.languageCode || '';
+          if (!code && ep.id) {
+            var m = String(ep.id).match(/^([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,4})?)\./);
+            if (m) {
+              code = m[1];
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(TAG, 'could not parse audio track', err);
+    }
+    return { name: name, code: code };
+  }
+
+  function currentAudioBase(player) {
+    try {
+      if (!player || typeof player.getAudioTrack !== 'function') {
+        return null;
+      }
+      var info = audioTrackInfo(player.getAudioTrack());
+      return normalizeBase(info.code) || audioNameToBase(info.name) || null;
+    } catch (err) {
+      console.warn(TAG, 'could not read current audio track', err);
+      return null;
+    }
+  }
+
+  function getAudioList(player) {
+    try {
+      if (!player || typeof player.getAvailableAudioTracks !== 'function') {
+        return [];
+      }
+      var list = player.getAvailableAudioTracks();
+      return (list && list.length) ? list : [];
+    } catch (err) {
+      console.warn(TAG, 'could not read audio track list', err);
+      return [];
+    }
+  }
+
+  function findOriginalAudio(list, nativeBase) {
+    var base = normalizeBase(nativeBase);
+    var fallback = null;
+    for (var i = 0; i < list.length; i++) {
+      var info = audioTrackInfo(list[i]);
+      var lang = normalizeBase(info.code) || audioNameToBase(info.name);
+      if (lang !== base) {
+        continue;
+      }
+      if (!fallback) {
+        fallback = list[i];
+      }
+      if (/original$/i.test(info.name)) {
+        return list[i];
+      }
+    }
+    return fallback;
+  }
+
+  function findVideoEl(player) {
+    try {
+      if (!player) {
+        return null;
+      }
+      if (player.shadowRoot) {
+        var shadowVideo = player.shadowRoot.querySelector('video');
+        if (shadowVideo) {
+          return shadowVideo;
+        }
+      }
+      return player.querySelector('video');
+    } catch (err) {
+      console.warn(TAG, 'could not find video element', err);
+      return null;
+    }
+  }
+
+  function waitForStable(player, done) {
+    var start = Date.now();
+    (function poll() {
+      var ok = false;
+      var failed = false;
+      try {
+        var v = findVideoEl(player);
+        ok = !!v && !v.paused && !v.seeking && v.readyState >= 3;
+      } catch (err) {
+        failed = true;
+        console.warn(TAG, 'stability check failed', err);
+      }
+      if (failed) {
+        done(false);
+        return;
+      }
+      if (ok) {
+        window.setTimeout(function () {
+          done(true);
+        }, 500);
+        return;
+      }
+      if (Date.now() - start >= 15000) {
+        done(false);
+        return;
+      }
+      window.setTimeout(poll, 300);
+    })();
+  }
+
+  function gatherData(player) {
+    var playerResponse = getPlayerResponseFromPlayer(player) || getPlayerResponse();
+    var staticTracks = playerResponse ? getCaptionTracks(playerResponse) : [];
+    var liveTracks = getLiveTracklist(player);
+    var audioCaps = [];
+    try {
+      var audioEntry = (typeof player.getAudioTrack === 'function') ? player.getAudioTrack() : null;
+      if (audioEntry && audioEntry.captionTracks) {
+        audioCaps = audioEntry.captionTracks;
+      }
+    } catch (err) {
+      console.warn(TAG, 'could not read audio caption tracks', err);
+    }
+    var tracks = mergeTracks(mergeTracks(staticTracks, liveTracks), audioCaps);
+    var out = { playerResponse: playerResponse, tracks: tracks, native: null, target: null, pick: null };
+    if (!tracks.length) {
+      return out;
+    }
+    out.native = detectNativeLanguage(playerResponse, tracks);
+    out.target = chooseTargetLanguage(out.native);
+    out.pick = pickTrack(out.target, tracks);
+    return out;
   }
 
   function isVideoPage() {
@@ -406,13 +630,13 @@
           console.info(TAG, 'track drifted after playback started (current=' + (current || 'none') +
             '), re-applying');
           attempts = 0;
-          attempt(0);
+          attempt();
         }
       }, 1500);
     };
     document.addEventListener('playing', playingHandler, true);
 
-    function scheduleRetry(reason, nextMethod) {
+    function scheduleRetry(reason) {
       if (seq !== currentSeq) {
         return;
       }
@@ -423,73 +647,176 @@
       attempts += 1;
       console.info(TAG, reason + ' — retry ' + attempts + '/' + MAX_ATTEMPTS);
       window.setTimeout(function () {
-        attempt(nextMethod);
+        attempt();
       }, RETRY_MS);
     }
 
-    function attempt(methodIdx) {
+    function attempt() {
       if (seq !== currentSeq) {
         return;
       }
       var player = getPlayer();
       if (!player) {
-        scheduleRetry('player not ready yet', 0);
+        scheduleRetry('player not ready yet');
         return;
       }
-      var playerResponse = getPlayerResponseFromPlayer(player) || getPlayerResponse();
-      var staticTracks = playerResponse ? getCaptionTracks(playerResponse) : [];
-      var tracks = mergeTracks(staticTracks, getLiveTracklist(player));
-      if (tracks.length === 0) {
-        if (!playerResponse) {
-          scheduleRetry('player data not ready yet', 0);
-        } else {
-          scheduleRetry('no caption tracks exposed yet', 0);
-        }
+      runSelection(player, false);
+    }
+
+    function runSelection(player, audioTried) {
+      var data = gatherData(player);
+      if (!data.tracks.length) {
+        scheduleRetry(data.playerResponse ? 'no caption tracks exposed yet' : 'player data not ready yet');
         return;
       }
-      var nativeLanguage = detectNativeLanguage(playerResponse, tracks);
-      var targetBase = chooseTargetLanguage(nativeLanguage);
-      var track = pickTrack(targetBase, tracks);
-      if (!track) {
+      if (!data.pick) {
         console.warn(TAG, 'no usable caption track found');
         return;
       }
-      wantedBase = targetBase;
+      wantedBase = data.target;
       window.__AUTO_NATIVE_SUBS_LAST__ = {
         extVersion: window.__AUTO_NATIVE_SUBS_VERSION__ || 'unknown',
-        available: tracks.map(trackLabel),
-        native: nativeLanguage,
-        target: targetBase,
-        picked: trackLabel(track),
+        available: data.tracks.map(trackLabel),
+        native: data.native,
+        target: data.target,
+        translation: data.pick.tlang,
+        picked: trackLabel(data.pick.track),
         currentBefore: currentTrackCode(player),
         currentAfter: null,
         result: 'pending'
       };
-      console.info(TAG, 'available: ' + tracks.map(trackLabel).join(', ') +
-        ' | native=' + (nativeLanguage || 'unknown') + ' target=' + targetBase);
-      selectTrack(player, track, methodIdx);
+      console.info(TAG, 'available: ' + data.tracks.map(trackLabel).join(', ') +
+        ' | native=' + (data.native || 'unknown') + ' target=' + data.target +
+        (data.pick.tlang ? ' translate=' + data.pick.tlang : ''));
+      waitForStable(player, function (stable) {
+        if (seq !== currentSeq) {
+          return;
+        }
+        if (!stable) {
+          console.info(TAG, 'video not stably playing yet, will re-apply on playback');
+          return;
+        }
+        selectAndVerify(player, data, 0, function (ok) {
+          if (seq !== currentSeq) {
+            return;
+          }
+          if (ok) {
+            return;
+          }
+          if (!audioTried) {
+            audioSwitchToOriginal(player, data.native, function (switched) {
+              if (seq !== currentSeq) {
+                return;
+              }
+              if (!switched) {
+                console.warn(TAG, 'giving up: subtitle select failed and no original audio to switch to');
+                return;
+              }
+              window.setTimeout(function () {
+                if (seq !== currentSeq) {
+                  return;
+                }
+                runSelection(getPlayer() || player, true);
+              }, 2500);
+            });
+          } else {
+            console.warn(TAG, 'giving up: track mismatch even after audio switch');
+          }
+        });
+      });
+    }
+
+    function selectAndVerify(player, data, methodIdx, done) {
+      var track = data.pick.track;
+      var tlang = data.pick.tlang;
+      selectTrack(player, track, methodIdx, tlang);
       window.setTimeout(function () {
         if (seq !== currentSeq) {
           return;
         }
         var current = currentTrackCode(player);
-        var codeOk = current && normalizeBase(current) === normalizeBase(track.languageCode);
+        var currentBase = normalizeBase(current);
+        var codeOk = !!current && (currentBase === normalizeBase(track.languageCode) ||
+          (!!tlang && currentBase === normalizeBase(tlang)));
         window.__AUTO_NATIVE_SUBS_LAST__.currentAfter = current;
         if (codeOk) {
           window.__AUTO_NATIVE_SUBS_LAST__.result = 'ok';
-              console.info(TAG, 'subtitles set to ' + trackLabel(track) +
-                ' | native=' + (nativeLanguage || 'unknown') + ' target=' + targetBase);
-        } else if (methodIdx < 2) {
-          scheduleRetry('method ' + methodIdx + ' did not stick (current=' + (current || 'none') +
-            '), trying next method', methodIdx + 1);
-        } else {
-          scheduleRetry('track mismatch (current=' + (current || 'none') +
-            ', expected=' + track.languageCode + ')', 0);
+          console.info(TAG, 'subtitles set to ' + trackLabel(track) +
+            (tlang ? ' translated to ' + tlang : '') +
+            ' | native=' + (data.native || 'unknown') + ' target=' + data.target);
+          done(true);
+          return;
         }
+        if (methodIdx < 3) {
+          console.info(TAG, 'select method ' + methodIdx + ' did not stick (current=' + (current || 'none') + ')');
+          selectAndVerify(player, data, methodIdx + 1, done);
+          return;
+        }
+        done(false);
       }, VERIFY_MS);
     }
 
-    attempt(0);
+    function audioSwitchToOriginal(player, nativeLanguage, done) {
+      fetchAudioList(0);
+      function fetchAudioList(tries) {
+        if (seq !== currentSeq) {
+          return;
+        }
+        var list = getAudioList(player);
+        if (list.length < 2) {
+          if (tries < 6) {
+            window.setTimeout(function () {
+              fetchAudioList(tries + 1);
+            }, 500);
+            return;
+          }
+          console.info(TAG, 'single audio track, leaving audio alone');
+          done(false);
+          return;
+        }
+        var nativeBase = normalizeBase(nativeLanguage);
+        if (currentAudioBase(player) === nativeBase) {
+          done(false);
+          return;
+        }
+        var want = findOriginalAudio(list, nativeBase);
+        if (!want) {
+          console.info(TAG, 'no original-language audio track found');
+          done(false);
+          return;
+        }
+        var beforeId = null;
+        try {
+          var cur = player.getAudioTrack();
+          beforeId = (cur && cur.id) || null;
+        } catch (err) {
+          console.warn(TAG, 'could not read current audio id', err);
+        }
+        try {
+          player.setAudioTrack(want);
+        } catch (err) {
+          console.warn(TAG, 'setAudioTrack failed', err);
+          done(false);
+          return;
+        }
+        console.info(TAG, 'switched audio to original track');
+        window.setTimeout(function () {
+          if (seq !== currentSeq) {
+            return;
+          }
+          var afterId = null;
+          try {
+            var now = player.getAudioTrack();
+            afterId = (now && now.id) || null;
+          } catch (err) {
+            console.warn(TAG, 'could not re-read audio track', err);
+          }
+          done(!!afterId && afterId !== beforeId);
+        }, 2500);
+      }
+    }
+
+    attempt();
   }
 
   function onNavigate() {
