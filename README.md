@@ -22,8 +22,8 @@ No accounts, no network calls, no tracking. Settings live in local extension sto
 
 ## Install
 
-- **AMO (once published):** link coming soon.
-- **Temporary (development):** Firefox → `about:debugging#/runtime/this-firefox` → Load Temporary Add-on → pick `manifest.json`.
+- ** https://addons.mozilla.org/en-US/firefox/addon/youtube-auto-native-subtitles/ **
+- **development:** Firefox → `about:debugging#/runtime/this-firefox` → Load Temporary Add-on → pick `manifest.json`.
 
 ## Settings
 
