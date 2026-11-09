@@ -258,35 +258,67 @@
   }
 
   // Native-language detection, best signal first:
-  // 1. Auto-generated (ASR) caption track in the page data — made from the audio.
-  // 2. Single audio track language.
-  // 3. The "original" audio track when several dubs exist.
-  // 4. Auto track from the live player list (kind "asr", or a dot-prefixed
-  //    vssId such as ".es"). Auto-translate tracks are only a last resort —
-  //    they mirror another language, not the audio.
-  // 5. First caption track as a last resort.
-  function detectNativeLanguage(playerResponse, extraTracks) {
+  // 1. The video's ORIGINAL audio track. Since YouTube auto-dubs videos it
+  //    publishes one audio track per dub AND one auto-generated (ASR) caption
+  //    track per audio track. The dub's ASR track can be listed first (e.g.
+  //    English before German on a German video), so "first ASR track" is not
+  //    the video's language — the original audio track is.
+  // 2. A single ASR caption track — unambiguous, since it is made from the audio.
+  // 3. The currently playing audio track.
+  // 4. First ASR track, then the first caption track as a last resort.
+  function detectNativeLanguage(playerResponse, extraTracks, player) {
     var tracks = getCaptionTracks(playerResponse);
+    var live = extraTracks || [];
     var i;
-    for (i = 0; i < tracks.length; i++) {
-      if (tracks[i] && tracks[i].kind === 'asr' && tracks[i].languageCode) {
-        return tracks[i].languageCode;
+
+    var original = getOriginalAudioLanguage(player, playerResponse);
+    if (original) {
+      return original;
+    }
+
+    var asrLangs = [];
+    function collectAsr(track) {
+      if (!track || track.kind !== 'asr' || !track.languageCode) {
+        return;
       }
+      var base = normalizeBase(track.languageCode);
+      for (var k = 0; k < asrLangs.length; k++) {
+        if (normalizeBase(asrLangs[k]) === base) {
+          return;
+        }
+      }
+      asrLangs.push(track.languageCode);
     }
-    var audioTracks = getAudioTracks(playerResponse);
-    if (audioTracks.length === 1 && audioTracks[0] && audioTracks[0].languageCode) {
-      return audioTracks[0].languageCode;
+    for (i = 0; i < tracks.length; i++) {
+      collectAsr(tracks[i]);
     }
-    if (audioTracks.length > 1) {
-      for (i = 0; i < audioTracks.length; i++) {
-        var entry = audioTracks[i] || {};
-        var name = (entry.name && entry.name.simpleText) || '';
-        if (/original/i.test(name) && entry.languageCode) {
-          return entry.languageCode;
+    for (i = 0; i < live.length; i++) {
+      collectAsr(live[i]);
+    }
+    if (asrLangs.length === 1) {
+      return asrLangs[0];
+    }
+
+    var current = currentAudioBase(player);
+    if (current) {
+      for (i = 0; i < tracks.length; i++) {
+        if (tracks[i] && normalizeBase(tracks[i].languageCode) === current) {
+          return tracks[i].languageCode;
+        }
+      }
+      for (i = 0; i < live.length; i++) {
+        if (live[i] && normalizeBase(live[i].languageCode) === current) {
+          return live[i].languageCode;
         }
       }
     }
-    var live = extraTracks || [];
+
+    if (asrLangs.length) {
+      return asrLangs[0];
+    }
+    if (tracks.length > 0 && tracks[0] && tracks[0].languageCode) {
+      return tracks[0].languageCode;
+    }
     for (i = 0; i < live.length; i++) {
       if (isAutoTrack(live[i]) && live[i].languageCode) {
         return live[i].languageCode;
@@ -297,9 +329,6 @@
       if (typeof auto.vssId === 'string' && auto.vssId.charAt(0) === '.' && auto.languageCode) {
         return auto.languageCode;
       }
-    }
-    if (tracks.length > 0 && tracks[0] && tracks[0].languageCode) {
-      return tracks[0].languageCode;
     }
     for (i = 0; i < live.length; i++) {
       if (live[i] && !live[i].translatable && live[i].languageCode) {
@@ -470,7 +499,7 @@
     ko: ['korean', 'coreano', 'coréen'],
     ar: ['arabic', 'árabe', 'arabe'],
     hi: ['hindi', 'hindí'],
-    tr: ['turkish', 'turco', 'turc']
+    tr: ['turkish', 'türkçe', 'turkce', 'turco', 'turc']
   };
 
   function audioNameToBase(name) {
@@ -497,29 +526,124 @@
     var code = '';
     try {
       if (entry && typeof entry === 'object') {
+        // Live player tracks wrap the real descriptor in `Rb`/`EP`; page data
+        // tracks carry `audioTrackId` ("de-DE.4", "en-US.10").
+        var desc = entry.Rb || entry.EP || entry.ep || {};
+        var id = desc.id || desc.audioTrackId || entry.audioTrackId || entry.id || '';
+        var idMatch = String(id).match(/^([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,4})?)\./);
+        if (idMatch) {
+          code = idMatch[1];
+        }
         if (typeof entry.getLanguageInfo === 'function') {
           var li = entry.getLanguageInfo() || {};
           name = li.name || li.languageName || '';
-          code = li.languageCode || li.code || '';
+          if (!code) {
+            code = li.languageCode || li.code || '';
+          }
         }
-        var ep = entry.EP || entry.ep || {};
         if (!name) {
-          name = ep.name || entry.name || entry.displayName || '';
+          name = desc.name || entry.name || entry.displayName || '';
+        }
+        if (typeof name === 'object' && name && name.simpleText) {
+          name = name.simpleText;
         }
         if (!code) {
           code = entry.languageCode || '';
-          if (!code && ep.id) {
-            var m = String(ep.id).match(/^([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,4})?)\./);
-            if (m) {
-              code = m[1];
-            }
-          }
         }
       }
     } catch (err) {
       console.warn(TAG, 'could not parse audio track', err);
     }
     return { name: name, code: code };
+  }
+
+  function audioTrackEntry(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return {};
+    }
+    return entry.Rb || entry.EP || entry.ep || entry;
+  }
+
+  function audioTrackLang(entry) {
+    var info = audioTrackInfo(entry);
+    return normalizeBase(info.code) || audioNameToBase(info.name) || '';
+  }
+
+  // Score how likely an audio track is the video's original one. Live player
+  // entries expose `isAutoDubbed`; page data marks originals with an ".4"
+  // audioTrackId suffix ("de-DE.4") and dubs with ".10" ("en-US.10").
+  // "Original" is also often part of the track name.
+  function originalAudioScore(entry) {
+    var desc = audioTrackEntry(entry);
+    if (desc.isAutoDubbed === true) {
+      return 0;
+    }
+    var name = desc.name || entry.name || entry.displayName || '';
+    if (typeof name === 'object' && name && name.simpleText) {
+      name = name.simpleText;
+    }
+    if (desc.isOriginal === true || desc.is_original === true || /original/i.test(String(name))) {
+      return 3;
+    }
+    var id = String(desc.id || desc.audioTrackId || entry.audioTrackId || '');
+    if (/\.4$/.test(id)) {
+      return 3;
+    }
+    if (desc.isAutoDubbed === false) {
+      return 2;
+    }
+    return 1;
+  }
+
+  function getAvailableAudioTracks(player) {
+    try {
+      if (player && typeof player.getAvailableAudioTracks === 'function') {
+        var list = player.getAvailableAudioTracks();
+        if (Array.isArray(list)) {
+          return list;
+        }
+      }
+    } catch (err) {
+      console.warn(TAG, 'could not list available audio tracks', err);
+    }
+    return [];
+  }
+
+  function pickOriginalAudioLanguage(list) {
+    if (!list || !list.length) {
+      return null;
+    }
+    var best = null;
+    var bestScore = 0;
+    var hinted = null;
+    var i;
+    for (i = 0; i < list.length; i++) {
+      var lang = audioTrackLang(list[i]);
+      if (!lang) {
+        continue;
+      }
+      if (!hinted) {
+        hinted = lang;
+      }
+      var score = originalAudioScore(list[i]);
+      if (score > bestScore) {
+        bestScore = score;
+        best = lang;
+      }
+    }
+    // Without any original marker, only a single track is unambiguous.
+    if (list.length === 1) {
+      return best || hinted;
+    }
+    return bestScore >= 2 ? best : null;
+  }
+
+  function getOriginalAudioLanguage(player, playerResponse) {
+    var lang = pickOriginalAudioLanguage(getAvailableAudioTracks(player));
+    if (lang) {
+      return lang;
+    }
+    return pickOriginalAudioLanguage(getAudioTracks(playerResponse));
   }
 
   function currentAudioBase(player) {
@@ -633,12 +757,12 @@
     }
   }
 
-  function finishDecision(playerResponse, tracks, liveOnly) {
+  function finishDecision(playerResponse, tracks, liveOnly, player) {
     var out = { playerResponse: playerResponse, tracks: tracks, native: null, target: null, pick: null, liveOnly: liveOnly };
     if (!tracks.length) {
       return out;
     }
-    out.native = detectNativeLanguage(playerResponse, tracks);
+    out.native = detectNativeLanguage(playerResponse, tracks, player);
     out.target = chooseTargetLanguage(out.native);
     out.pick = pickTrack(out.target, tracks);
     return out;
@@ -647,12 +771,12 @@
   function decideTracks(player) {
     var data = gatherData(player);
     if (responseMatchesVideo(data.playerResponse, currentVideoId())) {
-      return finishDecision(data.playerResponse, mergeTracks(mergeTracks(data.staticTracks, data.liveTracks), data.audioCaps), false);
+      return finishDecision(data.playerResponse, mergeTracks(mergeTracks(data.staticTracks, data.liveTracks), data.audioCaps), false, player);
     }
     var liveFresh = mergeTracks(data.liveTracks, data.audioCaps);
     if (liveFresh.length) {
       console.info(TAG, 'static data is stale, deciding from live player data');
-      return finishDecision(null, liveFresh, true);
+      return finishDecision(null, liveFresh, true, player);
     }
     return { playerResponse: data.playerResponse, tracks: [], native: null, target: null, pick: null, liveOnly: true };
   }
