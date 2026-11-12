@@ -589,6 +589,9 @@
     if (/\.4$/.test(id)) {
       return 3;
     }
+    if (/\.10$/.test(id)) {
+      return 0;
+    }
     if (desc.isAutoDubbed === false) {
       return 2;
     }
@@ -631,9 +634,11 @@
         best = lang;
       }
     }
-    // Without any original marker, only a single track is unambiguous.
+    // Without any original marker, only a single track is unambiguous — and
+    // a single track explicitly marked as an auto-dub is not the original, so
+    // fall through to the page data (the live list can lag behind on load).
     if (list.length === 1) {
-      return best || hinted;
+      return bestScore > 0 ? (best || hinted) : null;
     }
     return bestScore >= 2 ? best : null;
   }
@@ -643,7 +648,18 @@
     if (lang) {
       return lang;
     }
-    return pickOriginalAudioLanguage(getAudioTracks(playerResponse));
+    lang = pickOriginalAudioLanguage(getAudioTracks(playerResponse));
+    if (lang) {
+      return lang;
+    }
+    // The live player response can lag behind the page data (it may only know
+    // about the dub that is currently playing), so consult the static
+    // ytInitialPlayerResponse as a final source.
+    var staticResponse = getPlayerResponse();
+    if (staticResponse && staticResponse !== playerResponse) {
+      return pickOriginalAudioLanguage(getAudioTracks(staticResponse));
+    }
+    return null;
   }
 
   function currentAudioBase(player) {
@@ -839,6 +855,17 @@
       return out;
     }
     for (var i = 0; i < nodes.length; i++) {
+      // Hidden panel rows from other submenus are still in the DOM; only the
+      // visible ones belong to the menu level we are looking at.
+      try {
+        var rect = nodes[i].getBoundingClientRect();
+        if (!rect.width || !rect.height) {
+          continue;
+        }
+      } catch (rectErr) {
+        console.warn(TAG, 'could not measure menu row', rectErr);
+        continue;
+      }
       out.push({ el: nodes[i], label: rowLabel(nodes[i]), checked: nodes[i].getAttribute('aria-checked') });
     }
     return out;
@@ -984,6 +1011,7 @@
   }
 
   var playingHandler = null;
+  var visibilityHandler = null;
   var audioTimer = 0;
 
   function run() {
@@ -993,6 +1021,8 @@
     currentSeq += 1;
     var seq = currentSeq;
     var attempts = 0;
+    var selecting = false;
+    var pendingAttempt = false;
     var wantedBase = null;
     var audioBaseline = null;
     var audioLang = null;
@@ -1048,14 +1078,64 @@
       document.removeEventListener('playing', playingHandler, true);
       playingHandler = null;
     }
+    if (visibilityHandler) {
+      document.removeEventListener('visibilitychange', visibilityHandler, true);
+      visibilityHandler = null;
+    }
+
+    var initialPlaybackChecked = false;
+
+    function videoIsPlaying() {
+      try {
+        var v = document.querySelector('video');
+        return !!v && !v.paused;
+      } catch (err) {
+        console.warn(TAG, 'could not read playback state', err);
+        return false;
+      }
+    }
+
+    // Only touches the track when captions are already on and video is
+    // playing. If the selection never stuck, the retry loop owns recovery
+    // instead, so this never fights an in-flight attempt.
+    function checkDrift(reason) {
+      if (seq !== currentSeq || !wantedBase || !videoIsPlaying()) {
+        return;
+      }
+      var last = window.__AUTO_NATIVE_SUBS_LAST__;
+      if (!last || last.result !== 'ok') {
+        return;
+      }
+      var livePlayer = getPlayer();
+      if (!livePlayer) {
+        return;
+      }
+      var current = currentTrackCode(livePlayer);
+      if (!current || normalizeBase(current) === wantedBase) {
+        return;
+      }
+      console.info(TAG, 'caption track drifted ' + reason + ' (current=' + current +
+        ', wanted=' + wantedBase + '), re-applying');
+      attempts = 0;
+      attempt();
+    }
+
     playingHandler = function () {
       if (seq !== currentSeq) {
         return;
       }
-      document.removeEventListener('playing', playingHandler, true);
-      playingHandler = null;
       window.setTimeout(function () {
         if (seq !== currentSeq || !wantedBase) {
+          return;
+        }
+        var firstCheck = !initialPlaybackChecked;
+        initialPlaybackChecked = true;
+        if (!firstCheck) {
+          checkDrift('after playback resumed');
+          return;
+        }
+        if (selecting) {
+          console.info(TAG, 'selection already in progress, skipping duplicate playback attempt');
           return;
         }
         var livePlayer = getPlayer();
@@ -1073,14 +1153,28 @@
     };
     document.addEventListener('playing', playingHandler, true);
 
+    visibilityHandler = function () {
+      if (seq !== currentSeq || document.visibilityState !== 'visible') {
+        return;
+      }
+      window.setTimeout(function () {
+        checkDrift('after the tab became visible');
+      }, 1200);
+    };
+    document.addEventListener('visibilitychange', visibilityHandler, true);
+
     function scheduleRetry(reason) {
       if (seq !== currentSeq) {
         return;
       }
       if (attempts >= MAX_ATTEMPTS) {
         console.warn(TAG, 'giving up: ' + reason);
+        pendingAttempt = false;
+        endSelection();
         return;
       }
+      pendingAttempt = false;
+      endSelection();
       attempts += 1;
       console.info(TAG, reason + ' — retry ' + attempts + '/' + MAX_ATTEMPTS);
       window.setTimeout(function () {
@@ -1088,8 +1182,25 @@
       }, RETRY_MS);
     }
 
+    function endSelection() {
+      selecting = false;
+      if (pendingAttempt && seq === currentSeq) {
+        pendingAttempt = false;
+        window.setTimeout(function () {
+          if (seq === currentSeq) {
+            attempt();
+          }
+        }, 200);
+      }
+    }
+
     function attempt() {
       if (seq !== currentSeq) {
+        return;
+      }
+      if (selecting) {
+        pendingAttempt = true;
+        console.info(TAG, 'selection already in progress, queueing this attempt');
         return;
       }
       var player = getPlayer();
@@ -1101,6 +1212,7 @@
     }
 
     function runSelection(player, audioTried) {
+      selecting = true;
       var data = decideTracks(player);
       if (audioLang) {
         data.target = chooseTargetLanguage(audioLang);
@@ -1112,6 +1224,7 @@
       }
       if (!data.pick) {
         console.warn(TAG, 'no usable caption track found');
+        scheduleRetry('no usable caption track found');
         return;
       }
       wantedBase = data.target;
@@ -1137,13 +1250,41 @@
         }
         if (!stable) {
           console.info(TAG, 'video not stably playing yet, will re-apply on playback');
+          endSelection();
           return;
+        }
+        // Re-detect now that playback has settled: on auto-dubbed videos the
+        // original audio/caption tracks can lag behind the initial page load,
+        // so the first decision may only have seen the dub.
+        var fresh = decideTracks(player);
+        if (fresh.tracks.length) {
+          if (audioLang) {
+            fresh.target = chooseTargetLanguage(audioLang);
+            fresh.pick = pickTrack(fresh.target, fresh.tracks);
+          }
+          if (fresh.pick) {
+            data = fresh;
+            wantedBase = data.target;
+            window.__AUTO_NATIVE_SUBS_LAST__.available = data.tracks.map(trackLabel);
+            window.__AUTO_NATIVE_SUBS_LAST__.native = data.native;
+            window.__AUTO_NATIVE_SUBS_LAST__.target = data.target;
+            window.__AUTO_NATIVE_SUBS_LAST__.translation = data.pick.tlang;
+            window.__AUTO_NATIVE_SUBS_LAST__.picked = trackLabel(data.pick.track);
+            window.__AUTO_NATIVE_SUBS_LAST__.result = 'pending';
+            console.info(TAG, 're-decided after playback settled: available: ' +
+              data.tracks.map(trackLabel).join(', ') +
+              ' | native=' + (data.native || 'unknown') + ' target=' + data.target +
+              (data.pick.tlang ? ' translate=' + data.pick.tlang : ''));
+          } else {
+            console.warn(TAG, 're-decision found no usable caption track, keeping previous choice');
+          }
         }
         selectAndVerify(player, data, 0, function (ok) {
           if (seq !== currentSeq) {
             return;
           }
           if (ok) {
+            endSelection();
             return;
           }
           menuSelectSubtitle(data.pick.track, function (menuOk) {
@@ -1159,6 +1300,7 @@
                 return;
               }
               if (menuVerified) {
+                endSelection();
                 return;
               }
               afterMenuSubsFailed(player, data, audioTried);
@@ -1173,12 +1315,14 @@
         return;
       }
       if (audioTried) {
-        console.warn(TAG, 'giving up: subtitle select failed even after audio switch');
+        console.warn(TAG, 'subtitle select failed even after audio switch');
+        scheduleRetry('subtitle track did not stick after audio switch');
         return;
       }
       var audioTarget = chooseAudioTarget(data.native);
       if (!audioTarget) {
-        console.warn(TAG, 'giving up: subtitle select failed and audio switching is off');
+        console.warn(TAG, 'subtitle select failed and audio switching is off');
+        scheduleRetry('subtitle track did not stick');
         return;
       }
       audioSwitchToOriginal(player, audioTarget, function (switched) {
@@ -1186,7 +1330,8 @@
           return;
         }
         if (!switched) {
-          console.warn(TAG, 'giving up: subtitle select failed and audio switch failed');
+          console.warn(TAG, 'subtitle select failed and audio switch failed');
+          scheduleRetry('subtitle track did not stick and audio switch failed');
           return;
         }
         window.setTimeout(function () {
@@ -1196,7 +1341,8 @@
           var fresh = getPlayer() || player;
           var data2 = decideTracks(fresh);
           if (!data2.tracks.length || !data2.pick) {
-            console.warn(TAG, 'giving up: no captions after audio switch');
+            console.warn(TAG, 'no captions after audio switch');
+            scheduleRetry('no captions after audio switch');
             return;
           }
           wantedBase = data2.target;
@@ -1214,8 +1360,11 @@
                 return;
               }
               if (!ok2) {
-                console.warn(TAG, 'giving up: track mismatch even after audio switch');
+                console.warn(TAG, 'track mismatch even after audio switch');
+                scheduleRetry('subtitle track still did not stick after audio switch');
+                return;
               }
+              endSelection();
             });
           });
         }, 2500);
@@ -1307,7 +1456,12 @@
             return;
           }
           var tried = {};
-          explore(menuRows());
+          var rounds = 0;
+          window.setTimeout(function () {
+            if (seq === currentSeq) {
+              explore(menuRows());
+            }
+          }, 300);
           function explore(rows) {
             if (seq !== currentSeq) {
               return;
@@ -1323,6 +1477,21 @@
               } else {
                 order.push(rows[i]);
               }
+            }
+            if (!order.length) {
+              if (rounds < 3) {
+                rounds += 1;
+                window.setTimeout(function () {
+                  if (seq === currentSeq) {
+                    explore(menuRows());
+                  }
+                }, 300);
+                return;
+              }
+              closeSettings(function () {
+                done(null);
+              });
+              return;
             }
             tryRow(0);
             function tryRow(idx) {
@@ -1360,6 +1529,11 @@
                       }
                     }
                     hits.sort(function (a, b) {
+                      var aTranslated = />>|→/.test(a.label) ? 1 : 0;
+                      var bTranslated = />>|→/.test(b.label) ? 1 : 0;
+                      if (aTranslated !== bTranslated) {
+                        return aTranslated - bTranslated;
+                      }
                       return (isAutoEntry(a.label) ? 1 : 0) - (isAutoEntry(b.label) ? 1 : 0);
                     });
                     if (hits.length) {
@@ -1377,6 +1551,13 @@
               if (seq !== currentSeq) {
                 return;
               }
+              rounds += 1;
+              if (rounds > 3) {
+                closeSettings(function () {
+                  done(null);
+                });
+                return;
+              }
               closeSettings(function () {
                 if (seq !== currentSeq) {
                   return;
@@ -1389,6 +1570,9 @@
                     done(null);
                     return;
                   }
+                  // The previous pass may have clicked a row before its
+                  // submenu rendered. Allow every row to be tried again.
+                  tried = {};
                   explore(menuRows());
                 });
               });
